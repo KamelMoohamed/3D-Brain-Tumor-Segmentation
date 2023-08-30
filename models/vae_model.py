@@ -1,13 +1,15 @@
+import os
 import torch
-from tqdm import tqdm
 import pandas as pd
+from tqdm import tqdm
+from pathlib import Path
 from monai.metrics import DiceMetric
 from monai.losses import DiceLoss
 from monai.networks.nets import SegResNetVAE
 from monai.inferers import sliding_window_inference
 from monai.transforms import Activations, AsDiscrete, Compose
-from metrics import ValidationEvaluator
-from metrics import dice_coefficient
+from metrics.evaluation import ValidationEvaluator
+from metrics.dice_coefficient import dice_coefficient
 
 
 class VAEModel:
@@ -18,8 +20,11 @@ class VAEModel:
         self.val_loader = val_loader
         self.epochs = epochs
         self.learning_rate = 0.01
-        self.weight_decay:  1e-8
+        self.weight_decay = 1e-8
         self.amp = False
+        self.global_step = 0
+        self.log_table = []
+        self.weights_dir = "/content/drive/MyDrive/3D Brain Tumor Segmentation"
         self.build_model()
 
     def build_model(self):
@@ -61,6 +66,7 @@ class VAEModel:
         self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.amp)
 
     def train(self):
+        best_metric = -1
         for epoch in range(self.epochs):
             self.model.train()
             epoch_loss = 0
@@ -70,11 +76,10 @@ class VAEModel:
                     images, target = batch["images"].to(
                         self.device), batch["mask"].to(self.device)
                     VAE_loss = 0
-
-                    masks_pred, VAE_loss = self.model(images)
-
-                    loss = self.loss_function(masks_pred, target)
-                    loss += VAE_loss
+                    with torch.autocast(self.device.type if self.device.type != 'mps' else 'cpu', enabled=self.amp):
+                        masks_pred, VAE_loss = self.model(images)
+                        loss = self.loss_function(
+                            masks_pred, target) + VAE_loss
 
                     self.optimizer.zero_grad(set_to_none=True)
                     self.grad_scaler.scale(loss).backward()
@@ -93,6 +98,16 @@ class VAEModel:
                     'loss': epoch_loss / len(self.train_loader)
                 })
 
-            ValidationEvaluator.evaluate(
+            ValidationEvaluator.validate(
                 self.model, self.val_loader, self.dice_metric, self.dice_metric_batch,
-                self.post_trans, self.device, self.amp, VAE_param=False)
+                self.post_trans, self.device, self.amp, VAE_param=True)
+            current_metric_value = self.dice_metric.aggregate().item()
+            self.dice_metric.reset()
+            self.dice_metric_batch.reset()
+            if current_metric_value > best_metric:
+                Path(self.weights_dir).mkdir(parents=True, exist_ok=True)
+                state_dict = self.model.state_dict()
+                saving_path = os.path.join(
+                    self.weights_dir, 'best_checkpoint_dice_val_score.pth')
+                torch.save(state_dict, saving_path)
+                best_metric = current_metric_value

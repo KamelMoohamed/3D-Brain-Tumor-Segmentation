@@ -1,5 +1,5 @@
 import json
-from torch.utils import data
+from monai import data
 from sklearn.model_selection import train_test_split
 from monai.transforms import (
     Compose, LoadImaged, ConvertToMultiChannelBasedOnBratsClassesd, RandSpatialCropd, NormalizeIntensityd)
@@ -14,13 +14,13 @@ class Dataset:
             self.trainingData)
         self.train_loader, self.val_loader, self.train_dataset_length, self.validation_dataset_length = self.data_loader()
 
-    def read_data(path):
+    def read_data(self, path):
         with open(path) as json_file:
             dataset = json.load(json_file)
 
         return dataset['training'], dataset['validation']
 
-    def split_data(dataLst, test_size=0.15):
+    def split_data(self, dataLst, test_size=0.15):
         trainingPaths, validationPaths = train_test_split(
             dataLst, test_size=test_size, random_state=42)
         return trainingPaths, validationPaths

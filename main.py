@@ -1,11 +1,11 @@
-from utils import Dataset
-from models import VAEModel
+from utils.data_loader import Dataset
+from models.vae_model import VAEModel
 import torch
 
 
 if __name__ == "__main__":
     dataset = Dataset(
-        batch_size=32, json_path='/content/drive/MyDrive/Brain_tumor_segmentation/brain_dataset.json')
+        batch_size=5, json_path='/content/drive/MyDrive/3D Brain Tumor Segmentation/dataset.json')
 
     train_loader = dataset.train_loader
     val_loader = dataset.val_loader
