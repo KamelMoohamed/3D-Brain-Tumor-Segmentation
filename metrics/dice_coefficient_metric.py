@@ -1,8 +1,7 @@
+import torch
 
-import torch 
 
-def dice_coefficient(y_true, y_pred, axis=(1, 2, 3), 
-                     epsilon=0.00001):
+def dice_coefficient(y_true, y_pred, axis=(1, 2, 3), epsilon=0.00001):
     """
     Compute mean dice coefficient over all abnormality classes.
 
@@ -18,12 +17,13 @@ def dice_coefficient(y_true, y_pred, axis=(1, 2, 3),
         epsilon (float): small constant add to numerator and denominator to
                         avoid divide by 0 errors.
     Returns:
-        dice_coefficient (float): computed value of dice coefficient.     
+        dice_coefficient (float): computed value of dice coefficient.
     """
-    
-    dice_numerator = 2. * torch.sum(y_true * y_pred, axis=axis) + epsilon
-    dice_denominator = torch.sum(y_true, axis=axis) + torch.sum(y_pred, axis=axis) + epsilon
-    dice_coefficient = torch.mean((dice_numerator)/(dice_denominator))
-    
+
+    dice_numerator = 2.0 * torch.sum(y_true * y_pred, axis=axis) + epsilon
+    dice_denominator = (
+        torch.sum(y_true, axis=axis) + torch.sum(y_pred, axis=axis) + epsilon
+    )
+    dice_coefficient = torch.mean((dice_numerator) / (dice_denominator))
 
     return dice_coefficient

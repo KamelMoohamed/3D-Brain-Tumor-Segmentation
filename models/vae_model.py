@@ -1,19 +1,17 @@
 import os
-import torch
-import pandas as pd
-from tqdm import tqdm
 from pathlib import Path
-from monai.metrics import DiceMetric
+
+import torch
 from monai.losses import DiceLoss
+from monai.metrics import DiceMetric
 from monai.networks.nets import SegResNetVAE
-from monai.inferers import sliding_window_inference
 from monai.transforms import Activations, AsDiscrete, Compose
-from metrics.evaluation import ValidationEvaluator
-from metrics.dice_coefficient import dice_coefficient
+from tqdm import tqdm
+
+from metrics import ValidationEvaluator
 
 
 class VAEModel:
-
     def __init__(self, device, train_loader, val_loader, epochs):
         self.device = device
         self.train_loader = train_loader
@@ -24,7 +22,7 @@ class VAEModel:
         self.amp = False
         self.global_step = 0
         self.log_table = []
-        self.weights_dir = "/content/drive/MyDrive/3D Brain Tumor Segmentation"
+        self.weights_dir = os.path.join(os.path.abspath(__file__), "..", "weights")
         self.build_model()
 
     def build_model(self):
@@ -38,30 +36,41 @@ class VAEModel:
             in_channels=4,
             out_channels=3,
             dropout_prob=None,
-            act='RELU',
-            norm=('GROUP', {'num_groups': 8}),
+            act="RELU",
+            norm=("GROUP", {"num_groups": 8}),
             use_conv_final=True,
             blocks_down=(1, 2, 2, 4),
             blocks_up=(1, 1, 1),
-            upsample_mode='nontrainable',
+            upsample_mode="nontrainable",
         ).to(self.device)
 
         self.post_trans = Compose(
-            [Activations(sigmoid=True), AsDiscrete(threshold=0.5)])
+            [Activations(sigmoid=True), AsDiscrete(threshold=0.5)]
+        )
 
-        self.dice_metric = DiceMetric(
-            include_background=True, reduction="mean")
+        self.dice_metric = DiceMetric(include_background=True, reduction="mean")
         self.dice_metric_batch = DiceMetric(
-            include_background=True, reduction="mean_batch")
+            include_background=True, reduction="mean_batch"
+        )
 
         self.loss_function = DiceLoss(
-            smooth_nr=0, smooth_dr=1e-5, squared_pred=True, to_onehot_y=False, sigmoid=True)
+            smooth_nr=0,
+            smooth_dr=1e-5,
+            squared_pred=True,
+            to_onehot_y=False,
+            sigmoid=True,
+        )
 
-        self.optimizer = torch.optim.AdamW(self.model.parameters(
-        ), lr=self.learning_rate, foreach=True, weight_decay=self.weight_decay)
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=self.learning_rate,
+            foreach=True,
+            weight_decay=self.weight_decay,
+        )
 
         self.scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, T_max=self.epochs)
+            self.optimizer, T_max=self.epochs
+        )
 
         self.grad_scaler = torch.cuda.amp.GradScaler(enabled=self.amp)
 
@@ -71,36 +80,48 @@ class VAEModel:
             self.model.train()
             epoch_loss = 0
 
-            with tqdm(total=len(self.train_loader), desc=f'Epoch {epoch}/{self.epochs}', unit='img') as pbar:
+            with tqdm(
+                total=len(self.train_loader),
+                desc=f"Epoch {epoch}/{self.epochs}",
+                unit="img",
+            ) as pbar:
                 for batch in self.train_loader:
-                    images, target = batch["images"].to(
-                        self.device), batch["mask"].to(self.device)
+                    images, target = batch["images"].to(self.device), batch["mask"].to(
+                        self.device
+                    )
                     VAE_loss = 0
-                    with torch.autocast(self.device.type if self.device.type != 'mps' else 'cpu', enabled=self.amp):
+                    with torch.autocast(
+                        self.device.type if self.device.type != "mps" else "cpu",
+                        enabled=self.amp,
+                    ):
                         masks_pred, VAE_loss = self.model(images)
-                        loss = self.loss_function(
-                            masks_pred, target) + VAE_loss
+                        loss = self.loss_function(masks_pred, target) + VAE_loss
 
                     self.optimizer.zero_grad(set_to_none=True)
                     self.grad_scaler.scale(loss).backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), 0.1)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 0.1)
                     self.grad_scaler.step(self.optimizer)
                     self.grad_scaler.update()
 
                     pbar.update(images.shape[0])
                     self.global_step += 1
                     epoch_loss += loss.item()
-                    pbar.set_postfix(**{'loss (batch)': loss.item()})
+                    pbar.set_postfix(**{"loss (batch)": loss.item()})
 
-                self.log_table.append({
-                    'epoch': epoch,
-                    'loss': epoch_loss / len(self.train_loader)
-                })
+                self.log_table.append(
+                    {"epoch": epoch + 1, "loss": epoch_loss / len(self.train_loader)}
+                )
 
             ValidationEvaluator.validate(
-                self.model, self.val_loader, self.dice_metric, self.dice_metric_batch,
-                self.post_trans, self.device, self.amp, VAE_param=True)
+                self.model,
+                self.val_loader,
+                self.dice_metric,
+                self.dice_metric_batch,
+                self.post_trans,
+                self.device,
+                self.amp,
+                VAE_param=True,
+            )
             current_metric_value = self.dice_metric.aggregate().item()
             self.dice_metric.reset()
             self.dice_metric_batch.reset()
@@ -108,6 +129,7 @@ class VAEModel:
                 Path(self.weights_dir).mkdir(parents=True, exist_ok=True)
                 state_dict = self.model.state_dict()
                 saving_path = os.path.join(
-                    self.weights_dir, 'best_checkpoint_dice_val_score.pth')
+                    self.weights_dir, "best_checkpoint_dice_val_score.pth"
+                )
                 torch.save(state_dict, saving_path)
                 best_metric = current_metric_value
